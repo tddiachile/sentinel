@@ -1,0 +1,9 @@
+bin/
+server
+keys/*.pem
+*.env
+.env
+.claude/agent-memory/
+.claude/worktrees/
+web/node_modules/
+web/dist/
