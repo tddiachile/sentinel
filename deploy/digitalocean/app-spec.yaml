@@ -1,0 +1,170 @@
+# =============================================================================
+# DigitalOcean App Platform — App Spec for Sentinel
+#
+# Deploy with doctl:
+#   doctl apps create --spec deploy/digitalocean/app-spec.yaml
+#
+# Update existing app:
+#   doctl apps update <APP_ID> --spec deploy/digitalocean/app-spec.yaml
+#
+# IMPORTANT — RSA Keys limitation:
+#   App Platform does not support arbitrary file mounts. RSA keys must be
+#   stored base64-encoded as secrets and decoded at startup using a custom
+#   entrypoint script (deploy/digitalocean/entrypoint-appplatform.sh).
+#   See README.md section "App Platform — RSA Key Handling".
+#
+# PREREQUISITES (create in DigitalOcean dashboard before deploying):
+#   - A Container Registry (DOCR) with the sentinel-auth image pushed
+#   - A Managed PostgreSQL cluster
+#   - A Managed Redis cluster
+# =============================================================================
+name: sentinel
+region: nyc   # Change to your preferred region: nyc, sfo, ams, sgp, lon, fra, tor, blr
+
+# ---------------------------------------------------------------------------
+# Web Service — Go backend (auth-service)
+# ---------------------------------------------------------------------------
+services:
+  - name: auth-service
+    # Option A: build from source (Go buildpack)
+    github:
+      repo: YOUR_ORG/sentinel
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: Dockerfile
+    source_dir: /
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb-fixed   # ~$12/mo — adjust as needed
+
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 15
+      period_seconds: 10
+      timeout_seconds: 5
+      failure_threshold: 3
+
+    envs:
+      # Database — injected from managed PostgreSQL add-on
+      - key: DB_HOST
+        value: ${sentinel-db.HOSTNAME}
+        scope: RUN_TIME
+      - key: DB_NAME
+        value: ${sentinel-db.DATABASE}
+        scope: RUN_TIME
+      - key: DB_USER
+        value: ${sentinel-db.USERNAME}
+        scope: RUN_TIME
+      - key: DB_PASSWORD
+        value: ${sentinel-db.PASSWORD}
+        type: SECRET
+        scope: RUN_TIME
+      # Redis — injected from managed Redis add-on
+      - key: REDIS_ADDR
+        value: ${sentinel-redis.HOSTNAME}:${sentinel-redis.PORT}
+        scope: RUN_TIME
+      - key: REDIS_PASSWORD
+        value: ${sentinel-redis.PASSWORD}
+        type: SECRET
+        scope: RUN_TIME
+      # RSA keys — stored as base64-encoded secrets (see README for how to encode)
+      - key: RSA_PRIVATE_KEY_B64
+        value: "REPLACE_WITH_BASE64_ENCODED_PRIVATE_KEY"
+        type: SECRET
+        scope: RUN_TIME
+      - key: RSA_PUBLIC_KEY_B64
+        value: "REPLACE_WITH_BASE64_ENCODED_PUBLIC_KEY"
+        type: SECRET
+        scope: RUN_TIME
+      - key: JWT_PRIVATE_KEY_PATH
+        value: /tmp/keys/private.pem
+        scope: RUN_TIME
+      - key: JWT_PUBLIC_KEY_PATH
+        value: /tmp/keys/public.pem
+        scope: RUN_TIME
+      # Bootstrap
+      - key: BOOTSTRAP_ADMIN_USER
+        value: admin
+        scope: RUN_TIME
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        value: "REPLACE_WITH_STRONG_PASSWORD"
+        type: SECRET
+        scope: RUN_TIME
+
+# ---------------------------------------------------------------------------
+# Static Site — React frontend (built from web/ directory)
+# ---------------------------------------------------------------------------
+static_sites:
+  - name: frontend
+    github:
+      repo: YOUR_ORG/sentinel
+      branch: main
+      deploy_on_push: true
+    source_dir: /web
+    build_command: npm ci && npm run build
+    output_dir: dist
+    index_document: index.html
+    error_document: index.html   # SPA — all 404s serve index.html
+
+    envs:
+      - key: VITE_API_URL
+        # Points to the auth-service internal URL via App Platform routing
+        value: /api/v1
+        scope: BUILD_TIME
+      - key: VITE_APP_KEY
+        value: "REPLACE_AFTER_FIRST_DEPLOY"
+        type: SECRET
+        scope: BUILD_TIME
+
+# ---------------------------------------------------------------------------
+# Managed Databases
+# ---------------------------------------------------------------------------
+databases:
+  - name: sentinel-db
+    engine: PG
+    version: "15"
+    production: false        # Set true for production cluster (higher cost)
+    db_name: sentinel
+    db_user: sentinel
+
+  - name: sentinel-redis
+    engine: REDIS
+    version: "7"
+    production: false        # Set true for production cluster
+
+# ---------------------------------------------------------------------------
+# Routing — direct traffic to the right component
+# ---------------------------------------------------------------------------
+ingress:
+  rules:
+    # API, health, JWKS → auth-service
+    - match:
+        path:
+          prefix: /api
+      component:
+        name: auth-service
+        preserve_path_prefix: true
+    - match:
+        path:
+          prefix: /health
+      component:
+        name: auth-service
+    - match:
+        path:
+          prefix: /.well-known
+      component:
+        name: auth-service
+    # Everything else → React SPA
+    - match:
+        path:
+          prefix: /
+      component:
+        name: frontend
+
+# ---------------------------------------------------------------------------
+# Domain (optional — configure after DNS points to App Platform)
+# ---------------------------------------------------------------------------
+# domains:
+#   - domain: sentinel.tudominio.com
+#     type: PRIMARY
+#     minimum_tls_version: "1.2"

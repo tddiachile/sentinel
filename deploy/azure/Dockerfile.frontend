@@ -1,0 +1,47 @@
+# =============================================================================
+# Dockerfile.frontend — Azure Container Apps variant
+#
+# Same as deploy/dokploy/Dockerfile.frontend but uses an entrypoint script
+# to substitute the auth-service internal URL in nginx.conf at runtime.
+# This allows the container image to be built once and deployed to any env,
+# with the auth-service URL injected via the NGINX_AUTH_SERVICE_URL env var.
+#
+# Build context: project root
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Build stage — React 19 + Vite 7
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web/ .
+
+ARG VITE_API_URL=/api/v1
+ARG VITE_APP_KEY
+
+ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_APP_KEY=${VITE_APP_KEY}
+
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# Runtime stage — Nginx with envsubst for dynamic config
+# ---------------------------------------------------------------------------
+FROM nginx:alpine
+
+RUN apk add --no-cache gettext   # provides envsubst
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Template config — NGINX_AUTH_SERVICE_URL is substituted at container start
+COPY deploy/azure/nginx.conf.template /etc/nginx/templates/default.conf.template
+
+# nginx:alpine automatically runs envsubst on /etc/nginx/templates/*.template
+# and outputs to /etc/nginx/conf.d/ before starting nginx
+
+EXPOSE 80

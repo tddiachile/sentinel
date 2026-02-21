@@ -1,0 +1,106 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Backend — Go auth service
+  # Build context: project root (../../)
+  # ---------------------------------------------------------------------------
+  auth-service:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME:-sentinel}
+      - DB_USER=${DB_USER:-sentinel}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_PRIVATE_KEY_PATH=/app/keys/private.pem
+      - JWT_PUBLIC_KEY_PATH=/app/keys/public.pem
+      - BOOTSTRAP_ADMIN_USER=${BOOTSTRAP_ADMIN_USER:-admin}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # RSA keys — upload via Dokploy File Mounts UI
+      # Path in host: <project>/deploy/dokploy/files/keys/
+      - ./files/keys:/app/keys:ro
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Frontend — React SPA served by Nginx
+  # Nginx also proxies /api, /health and /.well-known to auth-service
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/dokploy/Dockerfile.frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api/v1}
+        VITE_APP_KEY: ${VITE_APP_KEY}
+    depends_on:
+      - auth-service
+    networks:
+      - sentinel-internal
+      - dokploy-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.sentinel.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.sentinel.entrypoints=websecure"
+      - "traefik.http.routers.sentinel.tls.certResolver=letsencrypt"
+      - "traefik.http.services.sentinel.loadbalancer.server.port=80"
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 15 — primary database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-sentinel}
+      POSTGRES_USER: ${DB_USER:-sentinel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-sentinel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 — cache and refresh tokens
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a ${REDIS_PASSWORD} ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  # Internal network — only auth-service, postgres and redis communicate here
+  sentinel-internal:
+    driver: bridge
+  # External Traefik network managed by Dokploy — only frontend connects here
+  dokploy-network:
+    external: true
