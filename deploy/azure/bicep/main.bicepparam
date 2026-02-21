@@ -1,39 +1,40 @@
 // =============================================================================
 // main.bicepparam — Parameters for Sentinel Azure Container Apps deployment
 //
-// Usage:
+// Usage (interactive — prompts for @secure params):
 //   az deployment group create \
 //     --resource-group rg-sentinel \
 //     --template-file deploy/azure/bicep/main.bicep \
 //     --parameters deploy/azure/bicep/main.bicepparam
+//
+// Usage (non-interactive — ideal for CI/CD):
+//   az deployment group create \
+//     --resource-group rg-sentinel \
+//     --template-file deploy/azure/bicep/main.bicep \
+//     --parameters deploy/azure/bicep/main.bicepparam \
+//     --parameters dbPassword=$DB_PASSWORD \
+//                  bootstrapAdminPassword=$BOOTSTRAP_ADMIN_PASSWORD
 // =============================================================================
 
 using './main.bicep'
 
-// Base name used in all resource names
-param appName = 'sentinel'
+param appName    = 'sentinel'
+param location   = 'eastus'    // Must match resource group location
 
-// Azure region (must match the resource group region)
-param location = 'eastus'
-
-// Container Registry — replace with your ACR details
-// az acr show --name <myacr> --query loginServer -o tsv
+// ACR login server: az acr show --name <myacr> --query loginServer -o tsv
 param acrLoginServer = 'REPLACE_WITH_ACR_LOGIN_SERVER'
-param acrUsername    = 'REPLACE_WITH_ACR_USERNAME'
 
-// Secrets — use az keyvault secret set or provide interactively
-// These will prompt during deployment if left as empty strings
-param acrPassword           = 'REPLACE_WITH_ACR_PASSWORD'
-param dbPassword            = 'REPLACE_WITH_DB_PASSWORD'
-param bootstrapAdminPassword = 'REPLACE_WITH_BOOTSTRAP_PASSWORD'
+param authImageTag     = 'latest'
+param frontendImageTag = 'latest'
 
-// redisPassword is read automatically from redis.listKeys() in the template
-// Leave empty — populated automatically during deployment
-param redisPassword = ''
+// @secure params — omit here and provide via --parameters flag or env vars
+// param dbPassword             = ''  // DO NOT commit
+// param bootstrapAdminPassword = ''  // DO NOT commit
 
-// Custom domain (optional — leave empty to use default .azurecontainerapps.io domain)
-// Point CNAME to the frontend FQDN output before adding this
+param bootstrapAdminUser = 'admin'
+
+// Custom domain (optional). Leave empty to use default *.azurecontainerapps.io
 param customDomain = ''
 
-// Frontend app key — set AFTER first deploy (see README step 6)
-param viteAppKey = 'placeholder'
+// Set after first deploy (see README step 7)
+// param viteAppKey = ''  // DO NOT commit

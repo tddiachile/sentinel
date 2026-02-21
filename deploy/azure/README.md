@@ -8,19 +8,23 @@ Stack completo sobre **Azure Container Apps** (serverless containers) con infrae
 Internet (HTTPS)
     │
     ▼
-Azure Container Apps (frontend) ← managed certificate (Let's Encrypt)
-    │   Nginx: SPA + proxy /api
+Azure Container Apps (frontend) ← managed certificate automático
+    │   Nginx: SPA + proxy /api (NGINX_AUTH_SERVICE_URL via envsubst)
     ▼
 Container Apps (auth-service) ← internal ingress only
     │
-    ├──→ Azure Database for PostgreSQL Flexible Server
+    ├──→ Azure Database for PostgreSQL Flexible Server (:5432)
     └──→ Azure Cache for Redis (TLS :6380)
 
-Secrets:      Azure Key Vault
-RSA keys:     Azure Files (Storage Account → File Share → Volume Mount)
-Images:       Azure Container Registry (ACR)
-Logs:         Log Analytics Workspace
+Secrets:         Azure Key Vault (con RBAC, acceso via Managed Identity)
+RSA keys:        Key Vault Secret Volume Mount → /app/keys/ (sin Storage Account)
+ACR pull:        User-Assigned Managed Identity (sin username/password)
+Logs:            Log Analytics Workspace
 ```
+
+**Ventaja del Secret Volume Mount:** Las claves RSA se montan directamente desde
+Key Vault como archivos en `/app/keys/private.pem` y `/app/keys/public.pem`.
+No se necesita Storage Account ni Azure Files. Auto-rotan en ~30 min al actualizarse en KV.
 
 ## Estructura de archivos
 
@@ -31,6 +35,7 @@ deploy/azure/
 │   └── main.bicepparam         # Parámetros del deployment
 ├── Dockerfile.frontend         # Build React + Nginx con envsubst
 ├── nginx.conf.template         # Config Nginx (auth-service URL dinámica)
+├── deploy.sh                   # Script de despliegue completo (10 pasos)
 ├── .env.example                # Variables para az CLI
 └── README.md                   # Esta guía
 ```
@@ -124,6 +129,28 @@ docker push "${ACR_LOGIN_SERVER}/sentinel-frontend:${FRONTEND_IMAGE_TAG:-latest}
 
 ---
 
+## Despliegue automatizado (recomendado)
+
+El script `deploy.sh` ejecuta todos los pasos de forma automática:
+
+```bash
+# Exportar variables obligatorias
+export AZURE_RESOURCE_GROUP=rg-sentinel
+export AZURE_LOCATION=eastus
+export ACR_NAME=mysentinelacr
+export DB_PASSWORD=<contraseña_fuerte>
+export BOOTSTRAP_ADMIN_PASSWORD=<contraseña_bootstrap>
+
+# Ejecutar desde la raíz del repositorio
+bash deploy/azure/deploy.sh
+```
+
+El script realiza: login → grupo de recursos → ACR → RSA keys → build imágenes → Bicep → upload keys a Key Vault → reinicio → verificación → instrucciones para VITE_APP_KEY.
+
+---
+
+## Despliegue manual paso a paso
+
 ## Paso 4 — Desplegar la infraestructura con Bicep
 
 Editar los parámetros en `deploy/azure/bicep/main.bicepparam` con los valores reales,
@@ -156,38 +183,39 @@ Guardar `frontendUrl` y `storageAccountName`.
 
 ---
 
-## Paso 5 — Subir las claves RSA al Azure Files share
+## Paso 5 — Subir las claves RSA al Key Vault
+
+Las claves RSA se montan como **Secret Volume** desde Key Vault (no se necesita Storage Account).
 
 ```bash
-# Obtener el nombre de la Storage Account del output de Bicep
-STORAGE_ACCOUNT=$(az deployment group show \
+# Obtener el nombre del Key Vault del output de Bicep
+KV_NAME=$(az deployment group show \
   --resource-group "${AZURE_RESOURCE_GROUP}" \
   --name main \
-  --query properties.outputs.storageAccountName.value -o tsv)
+  --query properties.outputs.keyVaultName.value -o tsv)
 
-STORAGE_KEY=$(az storage account keys list \
-  --account-name "${STORAGE_ACCOUNT}" \
-  --resource-group "${AZURE_RESOURCE_GROUP}" \
-  --query [0].value -o tsv)
+# Conceder acceso temporal para subir las claves (Key Vault Secrets Officer)
+MY_ID=$(az ad signed-in-user show --query id -o tsv)
+az role assignment create \
+  --role "Key Vault Secrets Officer" \
+  --assignee "${MY_ID}" \
+  --scope "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KV_NAME}"
 
-# Subir las claves RSA al file share
-az storage file upload \
-  --account-name "${STORAGE_ACCOUNT}" \
-  --account-key "${STORAGE_KEY}" \
-  --share-name "sentinel-keys" \
-  --source /tmp/sentinel-keys/private.pem \
-  --path private.pem
+# Subir las claves RSA como secretos de Key Vault
+az keyvault secret set \
+  --vault-name "${KV_NAME}" \
+  --name "jwt-private-key" \
+  --file /tmp/sentinel-keys/private.pem
 
-az storage file upload \
-  --account-name "${STORAGE_ACCOUNT}" \
-  --account-key "${STORAGE_KEY}" \
-  --share-name "sentinel-keys" \
-  --source /tmp/sentinel-keys/public.pem \
-  --path public.pem
+az keyvault secret set \
+  --vault-name "${KV_NAME}" \
+  --name "jwt-public-key" \
+  --file /tmp/sentinel-keys/public.pem
 
-echo "Claves RSA subidas al Azure Files share 'sentinel-keys'"
+echo "Claves RSA almacenadas en Key Vault como secretos."
+echo "Se montarán automáticamente en /app/keys/ del Container App."
 
-# Limpiar las claves del sistema local (mantener un backup seguro)
+# Limpiar (mantener backup seguro fuera del repo)
 # shred -u /tmp/sentinel-keys/private.pem
 ```
 
@@ -364,15 +392,17 @@ jobs:
 Error: open /app/keys/private.pem: no such file or directory
 ```
 
-Verificar que el file share tiene los archivos:
+Las claves no están en Key Vault o la Managed Identity no tiene acceso. Verificar:
 ```bash
-az storage file list \
-  --account-name "${STORAGE_ACCOUNT}" \
-  --share-name "sentinel-keys" \
-  --output table
-```
+# 1. Comprobar que los secretos existen en Key Vault
+KV_NAME=$(az deployment group show --resource-group "${AZURE_RESOURCE_GROUP}" \
+  --name main --query properties.outputs.keyVaultName.value -o tsv)
 
-Si faltan, volver al Paso 5.
+az keyvault secret list --vault-name "${KV_NAME}" --output table
+# Debe mostrar: jwt-private-key, jwt-public-key
+
+# 2. Si faltan, volver al Paso 5 y subirlos.
+```
 
 ### Error de conexión a PostgreSQL — SSL required
 
