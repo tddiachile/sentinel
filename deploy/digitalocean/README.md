@@ -30,6 +30,14 @@ deploy/digitalocean/
 ### Arquitectura
 
 ```
+Tu máquina local
+   │  docker build + push → DOCR
+   ▼
+registry.digitalocean.com/TU_ORG
+   │  docker compose pull (desde el Droplet)
+   ▼
+Droplet: solo ejecuta imágenes pre-construidas
+
 Internet (80/443)
     │
     ▼
@@ -37,10 +45,10 @@ Traefik (Let's Encrypt SSL automático)
     │
     ▼
 frontend:80 (Nginx)
-    ├── /api/*      → proxy → auth-service:8080
-    ├── /health     → proxy → auth-service:8080
+    ├── /api/*       → proxy → auth-service:8080
+    ├── /health      → proxy → auth-service:8080
     ├── /.well-known → proxy → auth-service:8080
-    └── /*          → React SPA
+    └── /*           → React SPA
 
 Red interna (sentinel-internal):
     auth-service ↔ postgres:5432
@@ -49,11 +57,38 @@ Red interna (sentinel-internal):
 
 ### Requisitos
 
-- **Droplet recomendado:** Ubuntu 22.04 LTS, 2 vCPU / 2 GB RAM / 50 GB SSD (~$18/mes)
+- **Droplet:** Ubuntu 22.04 LTS, 2 vCPU / 2 GB RAM / 50 GB SSD (~$18/mes)
   - Mínimo viable: 1 vCPU / 1 GB RAM ($6/mes, sin headroom)
+- **DOCR:** Container Registry en tu organización de DigitalOcean
 - **DNS:** El dominio debe apuntar a la IP del Droplet antes de activar SSL
 
-### Paso 1 — Crear y configurar el Droplet
+### Paso 0 — Crear el Container Registry (DOCR)
+
+En el panel de DigitalOcean → **Container Registry** → **Create Registry**.
+
+Anota la URL del registry: `registry.digitalocean.com/TU_ORG`
+
+### Paso 1 — Build y push de imágenes (desde tu máquina local)
+
+```bash
+export REGISTRY=registry.digitalocean.com/TU_ORG
+export IMAGE_TAG=v1.0
+
+# Autenticarse con DOCR
+docker login registry.digitalocean.com
+
+# Backend
+docker build -t ${REGISTRY}/sentinel-auth:${IMAGE_TAG} .
+docker push ${REGISTRY}/sentinel-auth:${IMAGE_TAG}
+
+# Frontend (con placeholder para el primer deploy — se actualiza en Paso 6)
+docker build -f deploy/digitalocean/Dockerfile.frontend \
+  --build-arg VITE_APP_KEY=OBTENER_DEL_PRIMER_DEPLOY \
+  -t ${REGISTRY}/sentinel-frontend:${IMAGE_TAG} .
+docker push ${REGISTRY}/sentinel-frontend:${IMAGE_TAG}
+```
+
+### Paso 2 — Crear y configurar el Droplet
 
 En el panel de DigitalOcean:
 1. Crear un Droplet con **Ubuntu 22.04 LTS**
@@ -61,66 +96,56 @@ En el panel de DigitalOcean:
 3. Agregar tu clave SSH para acceso
 4. Opcional: habilitar **Monitoring** y **Backups**
 
-Conectarse vía SSH:
+### Paso 3 — Ejecutar el script de setup en el Droplet
+
 ```bash
+# En tu máquina local: copiar el script al Droplet
+scp deploy/digitalocean/setup.sh root@<DROPLET_IP>:/tmp/setup.sh
+
+# Conectarse al Droplet y ejecutar
 ssh root@<DROPLET_IP>
+export DO_REGISTRY_TOKEN=<tu_personal_access_token_de_do>
+bash /tmp/setup.sh
 ```
 
-### Paso 2 — Ejecutar el script de setup
+El script instala Docker CE, inicia sesión en DOCR, genera las claves RSA (4096 bits) y configura UFW.
+
+### Paso 4 — Configurar variables de entorno y copiar archivos al Droplet
 
 ```bash
-# Configurar la URL del repositorio (opcional)
-export SENTINEL_REPO_URL=https://github.com/TU_ORG/sentinel.git
-
-# Descargar y ejecutar el script
-curl -fsSL https://raw.githubusercontent.com/TU_ORG/sentinel/main/deploy/digitalocean/setup.sh \
-  | bash
-```
-
-El script instala Docker CE, genera las claves RSA (4096 bits) y configura UFW.
-
-Alternativamente, ejecutar manualmente:
-```bash
-# En el Droplet
-apt-get update && apt-get install -y docker.io docker-compose-plugin git openssl
-git clone https://github.com/TU_ORG/sentinel.git /opt/sentinel
-cd /opt/sentinel
-
-# Generar claves RSA
-mkdir -p deploy/digitalocean/files/keys
-openssl genrsa -out deploy/digitalocean/files/keys/private.pem 4096
-openssl rsa -in deploy/digitalocean/files/keys/private.pem \
-            -pubout -out deploy/digitalocean/files/keys/public.pem
-chmod 600 deploy/digitalocean/files/keys/private.pem
-```
-
-### Paso 3 — Configurar variables de entorno
-
-```bash
-cd /opt/sentinel
+# En tu máquina local: preparar el archivo .env
 cp deploy/digitalocean/.env.example deploy/digitalocean/.env
 nano deploy/digitalocean/.env
 ```
 
 Completar todos los valores, especialmente:
+- `REGISTRY=registry.digitalocean.com/TU_ORG`
+- `IMAGE_TAG=v1.0`
 - `DOMAIN=sentinel.tudominio.com` (debe estar apuntando al Droplet)
 - `ACME_EMAIL=admin@tudominio.com`
 - `DB_PASSWORD`, `REDIS_PASSWORD`, `BOOTSTRAP_ADMIN_PASSWORD`
 
-### Paso 4 — Primer despliegue
+```bash
+# Copiar docker-compose.yml y .env al Droplet
+scp deploy/digitalocean/docker-compose.yml \
+    deploy/digitalocean/.env \
+    root@<DROPLET_IP>:/opt/sentinel/
+```
+
+### Paso 5 — Primer despliegue
 
 ```bash
+# En el Droplet
+ssh root@<DROPLET_IP>
 cd /opt/sentinel
 
-docker compose \
-  -f deploy/digitalocean/docker-compose.yml \
-  --env-file deploy/digitalocean/.env \
-  up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Seguir los logs en tiempo real:
 ```bash
-docker compose -f deploy/digitalocean/docker-compose.yml logs -f
+docker compose logs -f
 ```
 
 Esperar hasta ver:
@@ -129,29 +154,30 @@ auth-service  | {"level":"info","msg":"server started","port":8080}
 traefik       | level=info msg="Configuration loaded from providers"
 ```
 
-### Paso 5 — Obtener el secret_key del bootstrap
+### Paso 6 — Obtener el secret_key del bootstrap
 
 ```bash
-docker compose -f deploy/digitalocean/docker-compose.yml \
-  logs auth-service | grep "secret_key"
+# En el Droplet
+docker compose logs auth-service | grep "secret_key"
 ```
 
 Copiar el valor de `secret_key`. Guardarlo en un lugar seguro.
 
-### Paso 6 — Actualizar VITE_APP_KEY y redesplegar el frontend
+### Paso 7 — Actualizar VITE_APP_KEY y redesplegar el frontend
 
 ```bash
-# Editar .env y reemplazar el valor de VITE_APP_KEY
-nano deploy/digitalocean/.env
+# En tu máquina local: construir el frontend con el secret_key real
+docker build -f deploy/digitalocean/Dockerfile.frontend \
+  --build-arg VITE_APP_KEY=<secret_key_del_paso_6> \
+  -t ${REGISTRY}/sentinel-frontend:${IMAGE_TAG} .
+docker push ${REGISTRY}/sentinel-frontend:${IMAGE_TAG}
 
-# Reconstruir solo el frontend (el backend NO se reinicia)
-docker compose \
-  -f deploy/digitalocean/docker-compose.yml \
-  --env-file deploy/digitalocean/.env \
-  up -d --build frontend
+# En el Droplet: pull y reiniciar solo el frontend
+ssh root@<DROPLET_IP> \
+  "cd /opt/sentinel && docker compose pull frontend && docker compose up -d frontend"
 ```
 
-### Paso 7 — Verificar el despliegue
+### Paso 8 — Verificar el despliegue
 
 ```bash
 # Health check
@@ -227,12 +253,22 @@ doctl apps update <APP_ID> --spec deploy/digitalocean/app-spec.yaml
 ### Actualizar la aplicación
 
 ```bash
-cd /opt/sentinel
-git pull
-docker compose \
-  -f deploy/digitalocean/docker-compose.yml \
-  --env-file deploy/digitalocean/.env \
-  up -d --build
+# En tu máquina local: construir y pushear la nueva versión
+export REGISTRY=registry.digitalocean.com/TU_ORG
+export IMAGE_TAG=v1.1
+
+docker build -t ${REGISTRY}/sentinel-auth:${IMAGE_TAG} .
+docker push ${REGISTRY}/sentinel-auth:${IMAGE_TAG}
+
+# Si el frontend también cambió:
+docker build -f deploy/digitalocean/Dockerfile.frontend \
+  --build-arg VITE_APP_KEY=<secret_key> \
+  -t ${REGISTRY}/sentinel-frontend:${IMAGE_TAG} .
+docker push ${REGISTRY}/sentinel-frontend:${IMAGE_TAG}
+
+# En el Droplet: actualizar IMAGE_TAG en .env, pull y reiniciar
+ssh root@<DROPLET_IP> "sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/' /opt/sentinel/.env"
+ssh root@<DROPLET_IP> "cd /opt/sentinel && docker compose pull && docker compose up -d"
 ```
 
 ### Rotación de claves RSA (cada 90 días recomendado)

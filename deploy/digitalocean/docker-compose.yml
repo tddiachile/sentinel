@@ -36,12 +36,7 @@ services:
   # Only public-facing container. Traefik handles TLS.
   # ---------------------------------------------------------------------------
   frontend:
-    build:
-      context: ../..
-      dockerfile: deploy/digitalocean/Dockerfile.frontend
-      args:
-        VITE_API_URL: ${VITE_API_URL:-/api/v1}
-        VITE_APP_KEY: ${VITE_APP_KEY}
+    image: ${REGISTRY}/sentinel-frontend:${IMAGE_TAG:-latest}
     depends_on:
       - auth-service
     networks:
@@ -65,9 +60,7 @@ services:
   # Internal only. Accessed via Nginx proxy inside frontend container.
   # ---------------------------------------------------------------------------
   auth-service:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ${REGISTRY}/sentinel-auth:${IMAGE_TAG:-latest}
     environment:
       - DB_HOST=postgres
       - DB_NAME=${DB_NAME:-sentinel}

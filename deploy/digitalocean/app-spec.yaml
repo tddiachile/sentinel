@@ -14,9 +14,12 @@
 #   See README.md section "App Platform — RSA Key Handling".
 #
 # PREREQUISITES (create in DigitalOcean dashboard before deploying):
-#   - A Container Registry (DOCR) with the sentinel-auth image pushed
 #   - A Managed PostgreSQL cluster
 #   - A Managed Redis cluster
+#
+# NOTE: A Container Registry (DOCR) is NOT required for App Platform.
+#   App Platform builds directly from the GitHub source defined below.
+#   DOCR is only needed for the Droplet + Docker Compose option (see README).
 # =============================================================================
 name: sentinel
 region: nyc   # Change to your preferred region: nyc, sfo, ams, sgp, lon, fra, tor, blr

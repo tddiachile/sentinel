@@ -3,38 +3,48 @@
 # setup.sh — DigitalOcean Droplet initial setup for Sentinel
 #
 # Run once as root on a fresh Ubuntu 22.04 LTS Droplet:
-#   curl -fsSL https://raw.githubusercontent.com/.../setup.sh | bash
-# Or copy the script and run: bash setup.sh
+#   export DO_REGISTRY_TOKEN=<your_do_personal_access_token>
+#   bash setup.sh
+#
+# Required environment variables:
+#   DO_REGISTRY_TOKEN  — DigitalOcean personal access token with registry
+#                        read access (Settings → API → Generate New Token)
 #
 # What this script does:
 #   1. Installs Docker CE + Docker Compose plugin
-#   2. Creates the application directory structure
-#   3. Generates RSA key pair (4096 bits) for JWT RS256
-#   4. Sets up a systemd service for auto-start
+#   2. Logs in to DigitalOcean Container Registry (DOCR)
+#   3. Creates the application directory and generates RSA key pair (4096 bits)
+#   4. Configures UFW firewall
 # =============================================================================
 set -euo pipefail
 
 APP_DIR="/opt/sentinel"
-REPO_URL="${SENTINEL_REPO_URL:-}"  # Set before running: export SENTINEL_REPO_URL=...
+DO_REGISTRY_TOKEN="${DO_REGISTRY_TOKEN:-}"
 
 echo "======================================================"
 echo "  Sentinel — Droplet Setup"
 echo "======================================================"
 
+# ---- Validate required variables ----
+if [[ -z "${DO_REGISTRY_TOKEN}" ]]; then
+  echo "ERROR: DO_REGISTRY_TOKEN is not set."
+  echo "  Set it before running: export DO_REGISTRY_TOKEN=<your_do_token>"
+  exit 1
+fi
+
 # ---- 1. System packages ----
-echo "[1/5] Updating system and installing dependencies..."
+echo "[1/4] Updating system and installing dependencies..."
 apt-get update -qq
 apt-get install -y -qq \
   curl \
-  git \
   openssl \
   ca-certificates \
   gnupg \
   lsb-release \
   ufw
 
-# ---- 2. Docker CE ----
-echo "[2/5] Installing Docker CE..."
+# ---- 2. Docker CE + DOCR login ----
+echo "[2/4] Installing Docker CE..."
 if ! command -v docker &>/dev/null; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -56,29 +66,21 @@ else
   echo "  Docker already installed: $(docker --version)"
 fi
 
-# ---- 3. Application directory ----
-echo "[3/5] Setting up application directory at ${APP_DIR}..."
-mkdir -p "${APP_DIR}/deploy/digitalocean/files/keys"
+echo "  Logging in to registry.digitalocean.com..."
+echo "${DO_REGISTRY_TOKEN}" | docker login registry.digitalocean.com \
+  --username token \
+  --password-stdin
+echo "  DOCR login successful."
 
-if [[ -n "${REPO_URL}" ]]; then
-  if [[ -d "${APP_DIR}/.git" ]]; then
-    echo "  Repository already cloned. Pulling latest..."
-    git -C "${APP_DIR}" pull
-  else
-    echo "  Cloning repository..."
-    git clone "${REPO_URL}" "${APP_DIR}"
-  fi
-else
-  echo "  SENTINEL_REPO_URL not set — skipping git clone."
-  echo "  Manually copy the repository to ${APP_DIR} before deploying."
-fi
+# ---- 3. Application directory and RSA key pair ----
+echo "[3/4] Setting up application directory at ${APP_DIR}..."
+mkdir -p "${APP_DIR}/files/keys"
 
-# ---- 4. RSA key pair ----
-KEYS_DIR="${APP_DIR}/deploy/digitalocean/files/keys"
+KEYS_DIR="${APP_DIR}/files/keys"
 if [[ -f "${KEYS_DIR}/private.pem" ]]; then
-  echo "[4/5] RSA keys already exist — skipping generation."
+  echo "  RSA keys already exist — skipping generation."
 else
-  echo "[4/5] Generating RSA-4096 key pair for JWT RS256..."
+  echo "  Generating RSA-4096 key pair for JWT RS256..."
   openssl genrsa -out "${KEYS_DIR}/private.pem" 4096 2>/dev/null
   openssl rsa -in "${KEYS_DIR}/private.pem" \
               -pubout -out "${KEYS_DIR}/public.pem" 2>/dev/null
@@ -87,8 +89,8 @@ else
   echo "  Keys generated at: ${KEYS_DIR}/"
 fi
 
-# ---- 5. Firewall ----
-echo "[5/5] Configuring UFW firewall..."
+# ---- 4. Firewall ----
+echo "[4/4] Configuring UFW firewall..."
 ufw --force reset > /dev/null
 ufw default deny incoming
 ufw default allow outgoing
@@ -104,24 +106,31 @@ echo "======================================================"
 echo "  Setup complete!"
 echo "======================================================"
 echo ""
-echo "Next steps:"
-echo "  1. Copy .env.example to ${APP_DIR}/deploy/digitalocean/.env"
-echo "     and fill in all required values:"
-echo "     cp ${APP_DIR}/deploy/digitalocean/.env.example \\"
-echo "        ${APP_DIR}/deploy/digitalocean/.env"
-echo "     nano ${APP_DIR}/deploy/digitalocean/.env"
+echo "Next steps (from your local machine):"
 echo ""
-echo "  2. Deploy the stack:"
-echo "     cd ${APP_DIR}"
-echo "     docker compose -f deploy/digitalocean/docker-compose.yml \\"
-echo "       --env-file deploy/digitalocean/.env up -d --build"
+echo "  1. Build and push images to DOCR:"
+echo "     export REGISTRY=registry.digitalocean.com/TU_ORG"
+echo "     export IMAGE_TAG=v1.0"
 echo ""
-echo "  3. Wait ~30s for Let's Encrypt certificate, then verify:"
-echo "     curl https://\${DOMAIN}/health"
+echo "     docker build -t \${REGISTRY}/sentinel-auth:\${IMAGE_TAG} ."
+echo "     docker push \${REGISTRY}/sentinel-auth:\${IMAGE_TAG}"
+echo ""
+echo "     docker build -f deploy/digitalocean/Dockerfile.frontend \\"
+echo "       --build-arg VITE_APP_KEY=OBTENER_DEL_PRIMER_DEPLOY \\"
+echo "       -t \${REGISTRY}/sentinel-frontend:\${IMAGE_TAG} ."
+echo "     docker push \${REGISTRY}/sentinel-frontend:\${IMAGE_TAG}"
+echo ""
+echo "  2. Copy configuration files to the Droplet:"
+echo "     scp deploy/digitalocean/docker-compose.yml \\"
+echo "         deploy/digitalocean/.env \\"
+echo "         root@<DROPLET_IP>:${APP_DIR}/"
+echo ""
+echo "  3. Pull images and start the stack (on the Droplet):"
+echo "     ssh root@<DROPLET_IP>"
+echo "     cd ${APP_DIR} && docker compose pull && docker compose up -d"
 echo ""
 echo "  4. Get the bootstrap secret_key from logs:"
-echo "     docker compose -f deploy/digitalocean/docker-compose.yml \\"
-echo "       logs auth-service | grep secret_key"
+echo "     docker compose logs auth-service | grep secret_key"
 echo ""
 echo "  RSA keys location: ${KEYS_DIR}/"
 echo "  Keep a secure backup of private.pem!"

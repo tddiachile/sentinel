@@ -1,0 +1,99 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Frontend — React SPA + Nginx (proxies /api to auth-service)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/digitalocean/Dockerfile.frontend
+      args:
+        VITE_API_URL: /api/v1
+        VITE_APP_KEY: ${VITE_APP_KEY:-placeholder}
+    ports:
+      - "8090:80"
+    depends_on:
+      - auth-service
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Backend — Go auth service
+  # ---------------------------------------------------------------------------
+  auth-service:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME:-sentinel_local}
+      - DB_USER=${DB_USER:-sentinel}
+      - DB_PASSWORD=${DB_PASSWORD:-local_password}
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=
+      - JWT_PRIVATE_KEY_PATH=/app/keys/private.pem
+      - JWT_PUBLIC_KEY_PATH=/app/keys/public.pem
+      - BOOTSTRAP_ADMIN_USER=${BOOTSTRAP_ADMIN_USER:-admin}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-Admin@Local1!}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../../keys:/app/keys:ro
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 15
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-sentinel_local}
+      POSTGRES_USER: ${DB_USER:-sentinel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-local_password}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_local:/var/lib/postgresql/data
+      # Init scripts: executed automatically on first run (empty DB only)
+      - ../../migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-sentinel}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 (sin contraseña para local)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_local:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinel-internal
+    restart: unless-stopped
+
+volumes:
+  postgres_local:
+  redis_local:
+
+networks:
+  sentinel-internal:
+    driver: bridge
