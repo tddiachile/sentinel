@@ -45,13 +45,15 @@ All five phases are complete:
 
 | File | Purpose |
 |---|---|
-| `cmd/server/main.go` | Entry point — Fiber setup, router, graceful shutdown |
+| `cmd/server/main.go` | Entry point — Fiber setup, router, CORS, graceful shutdown |
 | `internal/config/config.go` | Config loading — YAML + env var overrides + validation |
 | `internal/token/jwt.go` | JWT RS256 generation, validation, JWKS |
 | `internal/service/auth_service.go` | Login, refresh, logout, change-password logic |
 | `internal/service/authz_service.go` | HasPermission, permissions map, cache |
 | `internal/bootstrap/initializer.go` | One-time system bootstrap |
+| `internal/handler/swagger_types.go` | Swagger-only request/response types (never used in runtime logic) |
 | `migrations/001_initial_schema.sql` | Full DDL — 12 tables + indexes |
+| `docs/api/` | Generated OpenAPI spec — docs.go, swagger.json, swagger.yaml |
 | `docs/specs/` | Source of truth for all business rules |
 
 ## Common Commands
@@ -62,6 +64,10 @@ make docker-up   # Start full stack (Go + PG + Redis)
 make build       # Compile to bin/auth-service
 make test        # go test ./... -v -cover
 make migrate     # Run database migrations
+
+# Regenerate Swagger docs after changing handler annotations
+~/go/bin/swag init --generalInfo cmd/server/main.go --output docs/api \
+  --parseDependency --parseInternal --exclude web/
 ```
 
 ## Running Tests
@@ -77,6 +83,13 @@ go test ./tests/integration/... -v -timeout 300s
 k6 run --env BASE_URL=http://localhost:8080 --env APP_KEY=<key> \
    tests/load/scenarios/mixed_load.js
 ```
+
+## API Documentation
+
+- Swagger UI is served at `GET /swagger/*` (no auth required).
+- Spec files are committed to `docs/api/` — run `swag init ...` to regenerate after annotation changes.
+- Swagger types live exclusively in `internal/handler/swagger_types.go`. Never embed Swagger annotations in domain or service structs.
+- CORS is enabled globally in `main.go` (`AllowOrigins: "*"`) so Swagger UI can call the API directly.
 
 ## Security Constraints
 

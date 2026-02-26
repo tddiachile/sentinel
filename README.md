@@ -54,17 +54,33 @@ npm run dev                 # http://localhost:5173
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `POST` | `/api/v1/auth/login` | Autenticación con JWT RS256 |
-| `POST` | `/api/v1/auth/refresh` | Renovación de token (rotación automática) |
-| `POST` | `/api/v1/auth/logout` | Cierre de sesión |
-| `POST` | `/api/v1/auth/change-password` | Cambio de contraseña |
-| `POST` | `/api/v1/authz/verify` | Verificación delegada de permisos |
-| `GET` | `/api/v1/authz/me/permissions` | Contexto completo del usuario |
-| `GET` | `/api/v1/authz/permissions-map` | Mapa global firmado (para backends) |
+| `POST` | `/auth/login` | Autenticación con JWT RS256 |
+| `POST` | `/auth/refresh` | Renovación de token (rotación automática) |
+| `POST` | `/auth/logout` | Cierre de sesión |
+| `POST` | `/auth/change-password` | Cambio de contraseña |
+| `POST` | `/authz/verify` | Verificación delegada de permisos |
+| `GET` | `/authz/me/permissions` | Contexto completo del usuario |
+| `GET` | `/authz/permissions-map` | Mapa global firmado (para backends) |
+| `GET` | `/authz/permissions-map/version` | Versión (hash) del mapa de permisos |
 | `GET` | `/.well-known/jwks.json` | Claves públicas RSA (RFC 7517) |
 | `GET` | `/health` | Health check |
 
-La API de administración (`/api/v1/admin/...`) expone 20 endpoints para gestión de usuarios, roles, permisos, centros de costo y auditoría.
+La API de administración (`/admin/...`) expone 30 endpoints para gestión de usuarios, roles, permisos, centros de costo, aplicaciones y auditoría.
+
+## Documentación interactiva (Swagger UI)
+
+Con el stack corriendo, la documentación interactiva está disponible en:
+
+```
+http://localhost:8080/swagger/
+```
+
+Para regenerar los docs tras modificar anotaciones en los handlers:
+
+```bash
+~/go/bin/swag init --generalInfo cmd/server/main.go --output docs/api \
+  --parseDependency --parseInternal --exclude web/
+```
 
 ## Comandos disponibles
 
@@ -97,12 +113,13 @@ k6 run --env BASE_URL=http://localhost:8080 --env APP_KEY=<key> \
 
 | Documento | Descripción |
 |---|---|
+| [`docs/api/swagger.json`](docs/api/swagger.json) | Especificación OpenAPI 3.0 — 40 endpoints, 9 grupos |
 | [`docs/backlog.md`](docs/backlog.md) | Backlog oficial — 42 historias de usuario / 196 story points |
 | [`docs/deployment.md`](docs/deployment.md) | Guía de despliegue completa (local, Docker, Azure) |
 | [`docs/specs/auth-api.md`](docs/specs/auth-api.md) | Endpoints de autenticación |
 | [`docs/specs/token-management.md`](docs/specs/token-management.md) | JWT RS256, refresh tokens, JWKS |
 | [`docs/specs/authorization.md`](docs/specs/authorization.md) | Modelo RBAC + algoritmo HasPermission |
-| [`docs/specs/admin-api.md`](docs/specs/admin-api.md) | API de administración (20 endpoints) |
+| [`docs/specs/admin-api.md`](docs/specs/admin-api.md) | API de administración (30 endpoints) |
 | [`docs/specs/data-model.md`](docs/specs/data-model.md) | Modelo de datos — 12 tablas |
 | [`docs/specs/security.md`](docs/specs/security.md) | Política de contraseñas, fuerza bruta, bootstrap |
 | [`docs/specs/audit.md`](docs/specs/audit.md) | Sistema de auditoría — 22 tipos de evento |
