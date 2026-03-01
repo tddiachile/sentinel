@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,12 +14,16 @@ import (
 
 // RoleRepository handles persistence of Role entities.
 type RoleRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewRoleRepository creates a new RoleRepository.
-func NewRoleRepository(db *pgxpool.Pool) *RoleRepository {
-	return &RoleRepository{db: db}
+func NewRoleRepository(db *pgxpool.Pool, log *slog.Logger) *RoleRepository {
+	return &RoleRepository{
+		db:     db,
+		logger: log.With("component", "role_repo"),
+	}
 }
 
 func scanRole(row pgx.Row) (*domain.Role, error) {

@@ -37,5 +37,6 @@ bootstrap:
   admin_password: ${BOOTSTRAP_ADMIN_PASSWORD}
 
 logging:
-  level: info
-  format: json
+  level: info       # debug | info | warn | error
+  format: json      # json | text
+  output: stdout    # stdout | stderr

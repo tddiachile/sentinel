@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -15,12 +16,16 @@ import (
 
 // AuditRepository handles persistence of AuditLog entries (INSERT and SELECT only).
 type AuditRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewAuditRepository creates a new AuditRepository.
-func NewAuditRepository(db *pgxpool.Pool) *AuditRepository {
-	return &AuditRepository{db: db}
+func NewAuditRepository(db *pgxpool.Pool, log *slog.Logger) *AuditRepository {
+	return &AuditRepository{
+		db:     db,
+		logger: log.With("component", "audit_repo"),
+	}
 }
 
 // Insert writes an audit log entry to the database.

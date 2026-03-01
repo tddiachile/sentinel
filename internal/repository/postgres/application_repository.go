@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,12 +14,16 @@ import (
 
 // ApplicationRepository handles persistence of Application entities.
 type ApplicationRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewApplicationRepository creates a new ApplicationRepository.
-func NewApplicationRepository(db *pgxpool.Pool) *ApplicationRepository {
-	return &ApplicationRepository{db: db}
+func NewApplicationRepository(db *pgxpool.Pool, log *slog.Logger) *ApplicationRepository {
+	return &ApplicationRepository{
+		db:     db,
+		logger: log.With("component", "app_repo"),
+	}
 }
 
 const appSelectFields = `id, name, slug, secret_key, is_active, created_at, updated_at`

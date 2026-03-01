@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,12 +13,16 @@ import (
 
 // UserCostCenterRepository manages user_cost_centers assignments.
 type UserCostCenterRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewUserCostCenterRepository creates a new UserCostCenterRepository.
-func NewUserCostCenterRepository(db *pgxpool.Pool) *UserCostCenterRepository {
-	return &UserCostCenterRepository{db: db}
+func NewUserCostCenterRepository(db *pgxpool.Pool, log *slog.Logger) *UserCostCenterRepository {
+	return &UserCostCenterRepository{
+		db:     db,
+		logger: log.With("component", "user_cc_repo"),
+	}
 }
 
 // Assign creates a new user_cost_center assignment.

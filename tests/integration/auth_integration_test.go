@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -19,6 +20,16 @@ import (
 	"github.com/enunezf/sentinel/internal/service"
 	"github.com/enunezf/sentinel/internal/token"
 )
+
+// testLogger returns a no-op logger suitable for integration tests.
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io_discard{}, nil))
+}
+
+// io_discard is an io.Writer that discards all output.
+type io_discard struct{}
+
+func (io_discard) Write(p []byte) (n int, err error) { return len(p), nil }
 
 // makeAuthSvc creates a fully wired AuthServiceI with real repos connecting to test containers.
 func makeAuthSvc(t *testing.T) *service.AuthServiceI {
@@ -42,16 +53,18 @@ func makeAuthSvc(t *testing.T) *service.AuthServiceI {
 		},
 	}
 
-	userRepo := pgrepository.NewUserRepository(testDB)
-	appRepo := pgrepository.NewApplicationRepository(testDB)
-	pgRefresh := pgrepository.NewRefreshTokenRepository(testDB)
-	redisRefresh := redisrepository.NewRefreshTokenRepository(testRedisClient)
-	pwdHistory := pgrepository.NewPasswordHistoryRepository(testDB)
-	userRoleRepo := pgrepository.NewUserRoleRepository(testDB)
+	log := testLogger()
 
-	// Null audit service (logs to /dev/null for integration tests).
-	auditRepo := pgrepository.NewAuditRepository(testDB)
-	auditSvc := service.NewAuditService(auditRepo)
+	userRepo := pgrepository.NewUserRepository(testDB, log)
+	appRepo := pgrepository.NewApplicationRepository(testDB, log)
+	pgRefresh := pgrepository.NewRefreshTokenRepository(testDB, log)
+	redisRefresh := redisrepository.NewRefreshTokenRepository(testRedisClient, log)
+	pwdHistory := pgrepository.NewPasswordHistoryRepository(testDB, log)
+	userRoleRepo := pgrepository.NewUserRoleRepository(testDB, log)
+
+	// Audit service with no-op logger (discards output for integration tests).
+	auditRepo := pgrepository.NewAuditRepository(testDB, log)
+	auditSvc := service.NewAuditService(auditRepo, log)
 	t.Cleanup(func() { auditSvc.Close() })
 
 	return service.NewAuthServiceI(

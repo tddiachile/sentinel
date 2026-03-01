@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,12 +14,16 @@ import (
 
 // CostCenterRepository handles persistence of CostCenter entities.
 type CostCenterRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewCostCenterRepository creates a new CostCenterRepository.
-func NewCostCenterRepository(db *pgxpool.Pool) *CostCenterRepository {
-	return &CostCenterRepository{db: db}
+func NewCostCenterRepository(db *pgxpool.Pool, log *slog.Logger) *CostCenterRepository {
+	return &CostCenterRepository{
+		db:     db,
+		logger: log.With("component", "cc_repo"),
+	}
 }
 
 func scanCostCenter(row pgx.Row) (*domain.CostCenter, error) {

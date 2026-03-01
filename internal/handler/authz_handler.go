@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"log/slog"
+
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/enunezf/sentinel/internal/middleware"
@@ -10,11 +12,15 @@ import (
 // AuthzHandler handles authorization endpoints.
 type AuthzHandler struct {
 	authzSvc *service.AuthzService
+	logger   *slog.Logger
 }
 
 // NewAuthzHandler creates a new AuthzHandler.
-func NewAuthzHandler(authzSvc *service.AuthzService) *AuthzHandler {
-	return &AuthzHandler{authzSvc: authzSvc}
+func NewAuthzHandler(authzSvc *service.AuthzService, log *slog.Logger) *AuthzHandler {
+	return &AuthzHandler{
+		authzSvc: authzSvc,
+		logger:   log.With("component", "authz"),
+	}
 }
 
 // verifyRequest is the POST /authz/verify request body.
@@ -58,6 +64,11 @@ func (h *AuthzHandler) Verify(c *fiber.Ctx) error {
 		CostCenterID: req.CostCenterID,
 	}, getIP(c), c.Get("User-Agent"))
 	if err != nil {
+		requestID, _ := c.Locals(middleware.LocalRequestID).(string)
+		h.logger.Error("authz verify: internal error",
+			"error", err,
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "authorization check failed")
 	}
 
@@ -83,6 +94,11 @@ func (h *AuthzHandler) MePermissions(c *fiber.Ctx) error {
 
 	resp, err := h.authzSvc.GetUserPermissions(c.Context(), claims)
 	if err != nil {
+		requestID, _ := c.Locals(middleware.LocalRequestID).(string)
+		h.logger.Error("authz me/permissions: internal error",
+			"error", err,
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "failed to get permissions")
 	}
 
@@ -108,6 +124,11 @@ func (h *AuthzHandler) PermissionsMap(c *fiber.Ctx) error {
 
 	resp, err := h.authzSvc.GetPermissionsMap(c.Context(), app.Slug)
 	if err != nil {
+		requestID, _ := c.Locals(middleware.LocalRequestID).(string)
+		h.logger.Error("authz permissions-map: internal error",
+			"error", err,
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "failed to get permissions map")
 	}
 
@@ -133,6 +154,11 @@ func (h *AuthzHandler) PermissionsMapVersion(c *fiber.Ctx) error {
 
 	version, generatedAt, err := h.authzSvc.GetPermissionsMapVersion(c.Context(), app.Slug)
 	if err != nil {
+		requestID, _ := c.Locals(middleware.LocalRequestID).(string)
+		h.logger.Error("authz permissions-map/version: internal error",
+			"error", err,
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "failed to get map version")
 	}
 

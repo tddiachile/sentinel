@@ -47,6 +47,7 @@ All five phases are complete:
 |---|---|
 | `cmd/server/main.go` | Entry point — Fiber setup, router, CORS, graceful shutdown |
 | `internal/config/config.go` | Config loading — YAML + env var overrides + validation |
+| `internal/logger/logger.go` | Sistema de logging estructurado (slog) — New(), ParseLevel(), WithComponent() |
 | `internal/token/jwt.go` | JWT RS256 generation, validation, JWKS |
 | `internal/service/auth_service.go` | Login, refresh, logout, change-password logic |
 | `internal/service/authz_service.go` | HasPermission, permissions map, cache |
@@ -93,6 +94,24 @@ cd web && npm run test:e2e
 - Spec files are committed to `docs/api/` — run `swag init ...` to regenerate after annotation changes.
 - Swagger types live exclusively in `internal/handler/swagger_types.go`. Never embed Swagger annotations in domain or service structs.
 - CORS is enabled globally in `main.go` (`AllowOrigins: "*"`) so Swagger UI can call the API directly.
+
+## Logging Conventions
+
+Sentinel uses `log/slog` (stdlib, Go 1.21+) configured via `config.yaml` under the `logging` key.
+
+- **Logger creation:** `logger.New(cfg.Logging)` in `main.go`; passed as `*slog.Logger` dependency — no global singleton.
+- **Component field:** Always use `logger.WithComponent(log, "name")` when creating a sub-logger for a service, handler, or repository.
+- **Output field:** `output: stdout` (default) or `output: stderr`.
+- **Exported helper for tests:** `logger.NewWithWriter(cfg, w io.Writer)` — captures output in a `bytes.Buffer`.
+
+| Level | When to use |
+|---|---|
+| `DEBUG` | SQL queries, cache hits/misses, detailed internal flows — not visible in production (level: info) |
+| `INFO` | Startup, shutdown, established connections, business events (login OK, bootstrap completed) |
+| `WARN` | Degradations: audit channel full, Redis timeout, invalid app key, expired JWT |
+| `ERROR` | Unrecoverable failures: DB down, JWT signing error, panic recovered |
+
+Security rule: **never log passwords, tokens, secret keys, or Authorization/X-App-Key header values.** See `// SECURITY:` comments in middleware files.
 
 ## Security Constraints
 

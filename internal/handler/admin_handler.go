@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"math"
 	"regexp"
 	"strconv"
@@ -29,6 +30,7 @@ type AdminHandler struct {
 	ccSvc     *service.CostCenterService
 	auditRepo *postgres.AuditRepository
 	appRepo   *postgres.ApplicationRepository
+	logger    *slog.Logger
 }
 
 // NewAdminHandler creates a new AdminHandler.
@@ -39,6 +41,7 @@ func NewAdminHandler(
 	ccSvc *service.CostCenterService,
 	auditRepo *postgres.AuditRepository,
 	appRepo *postgres.ApplicationRepository,
+	log *slog.Logger,
 ) *AdminHandler {
 	return &AdminHandler{
 		userSvc:   userSvc,
@@ -47,7 +50,18 @@ func NewAdminHandler(
 		ccSvc:     ccSvc,
 		auditRepo: auditRepo,
 		appRepo:   appRepo,
+		logger:    log.With("component", "admin"),
 	}
+}
+
+// internalError logs a 500 error and returns a standard error response.
+func (h *AdminHandler) internalError(c *fiber.Ctx, err error, msg string) error {
+	requestID, _ := c.Locals(middleware.LocalRequestID).(string)
+	h.logger.Error(msg,
+		"error", err,
+		"request_id", requestID,
+	)
+	return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 }
 
 // pagination helpers.
@@ -122,7 +136,7 @@ func (h *AdminHandler) ListUsers(c *fiber.Ctx) error {
 		PageSize: pageSize,
 	})
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: list users failed")
 	}
 
 	data := make([]fiber.Map, 0, len(users))
@@ -188,7 +202,7 @@ func (h *AdminHandler) CreateUser(c *fiber.Ctx) error {
 		UserAgent: c.Get("User-Agent"),
 	})
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -292,7 +306,7 @@ func (h *AdminHandler) UpdateUser(c *fiber.Ctx) error {
 		UserAgent: c.Get("User-Agent"),
 	})
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -334,7 +348,7 @@ func (h *AdminHandler) UnlockUser(c *fiber.Ctx) error {
 	}
 
 	if err := h.userSvc.UnlockUser(c.Context(), id, actorID, getIP(c), c.Get("User-Agent")); err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: unlock user failed")
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -370,7 +384,7 @@ func (h *AdminHandler) ResetPassword(c *fiber.Ctx) error {
 
 	tempPwd, err := h.userSvc.ResetPassword(c.Context(), id, actorID, getIP(c), c.Get("User-Agent"))
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: reset password failed")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -436,7 +450,7 @@ func (h *AdminHandler) AssignRole(c *fiber.Ctx) error {
 		UserAgent:  c.Get("User-Agent"),
 	})
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -484,7 +498,7 @@ func (h *AdminHandler) RevokeRole(c *fiber.Ctx) error {
 	}
 
 	if err := h.userSvc.RevokeRole(c.Context(), userID, rid, actorID, getIP(c), c.Get("User-Agent")); err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: revoke role failed")
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -545,7 +559,7 @@ func (h *AdminHandler) AssignPermission(c *fiber.Ctx) error {
 		UserAgent:    c.Get("User-Agent"),
 	})
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -592,7 +606,7 @@ func (h *AdminHandler) RevokePermission(c *fiber.Ctx) error {
 	}
 
 	if err := h.userSvc.RevokePermission(c.Context(), userID, pid, actorID, getIP(c), c.Get("User-Agent")); err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: revoke permission failed")
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -652,7 +666,7 @@ func (h *AdminHandler) AssignCostCenters(c *fiber.Ctx) error {
 		IP:            getIP(c),
 		UserAgent:     c.Get("User-Agent"),
 	}); err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"assigned": len(body.CostCenterIDs)})
@@ -688,7 +702,7 @@ func (h *AdminHandler) ListRoles(c *fiber.Ctx) error {
 
 	roles, total, err := h.roleSvc.ListRoles(c.Context(), filter)
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: list roles failed")
 	}
 
 	data := make([]fiber.Map, 0, len(roles))
@@ -748,7 +762,7 @@ func (h *AdminHandler) CreateRole(c *fiber.Ctx) error {
 
 	role, err := h.roleSvc.CreateRole(c.Context(), app.ID, body.Name, body.Description, actorID, getIP(c), c.Get("User-Agent"))
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(role)
@@ -836,7 +850,7 @@ func (h *AdminHandler) UpdateRole(c *fiber.Ctx) error {
 
 	role, err := h.roleSvc.UpdateRole(c.Context(), id, body.Name, body.Description, actorID, getIP(c), c.Get("User-Agent"))
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(role)
@@ -871,7 +885,7 @@ func (h *AdminHandler) DeleteRole(c *fiber.Ctx) error {
 	}
 
 	if err := h.roleSvc.DeactivateRole(c.Context(), id, actorID, getIP(c), c.Get("User-Agent")); err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -916,7 +930,7 @@ func (h *AdminHandler) AddRolePermission(c *fiber.Ctx) error {
 
 	for _, pid := range body.PermissionIDs {
 		if err := h.roleSvc.AddPermissionToRole(c.Context(), roleID, pid, actorID, getIP(c), c.Get("User-Agent")); err != nil {
-			return mapServiceError(c, err)
+			return h.mapServiceError(c, err)
 		}
 	}
 
@@ -957,7 +971,7 @@ func (h *AdminHandler) RemoveRolePermission(c *fiber.Ctx) error {
 	}
 
 	if err := h.roleSvc.RemovePermissionFromRole(c.Context(), roleID, pid, actorID, getIP(c), c.Get("User-Agent")); err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -993,7 +1007,7 @@ func (h *AdminHandler) ListPermissions(c *fiber.Ctx) error {
 
 	perms, total, err := h.permSvc.ListPermissions(c.Context(), filter)
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: list permissions failed")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(paginatedResponse(perms, page, pageSize, total))
@@ -1042,7 +1056,7 @@ func (h *AdminHandler) CreatePermission(c *fiber.Ctx) error {
 
 	perm, err := h.permSvc.CreatePermission(c.Context(), app.ID, body.Code, body.Description, body.ScopeType, actorID, getIP(c), c.Get("User-Agent"))
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(perm)
@@ -1077,7 +1091,7 @@ func (h *AdminHandler) DeletePermission(c *fiber.Ctx) error {
 	}
 
 	if err := h.permSvc.DeletePermission(c.Context(), id, actorID, getIP(c), c.Get("User-Agent")); err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -1113,7 +1127,7 @@ func (h *AdminHandler) ListCostCenters(c *fiber.Ctx) error {
 
 	ccs, total, err := h.ccSvc.ListCostCenters(c.Context(), filter)
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: list cost centers failed")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(paginatedResponse(ccs, page, pageSize, total))
@@ -1161,7 +1175,7 @@ func (h *AdminHandler) CreateCostCenter(c *fiber.Ctx) error {
 
 	cc, err := h.ccSvc.CreateCostCenter(c.Context(), app.ID, body.Code, body.Name, actorID, getIP(c), c.Get("User-Agent"))
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(cc)
@@ -1209,7 +1223,7 @@ func (h *AdminHandler) UpdateCostCenter(c *fiber.Ctx) error {
 
 	cc, err := h.ccSvc.UpdateCostCenter(c.Context(), id, body.Name, body.IsActive, actorID, getIP(c), c.Get("User-Agent"))
 	if err != nil {
-		return mapServiceError(c, err)
+		return h.mapServiceError(c, err)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(cc)
@@ -1282,7 +1296,7 @@ func (h *AdminHandler) ListAuditLogs(c *fiber.Ctx) error {
 
 	logs, total, err := h.auditRepo.List(c.Context(), filter)
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: list audit logs failed")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(paginatedResponse(logs, page, pageSize, total))
@@ -1327,7 +1341,7 @@ func (h *AdminHandler) ListApplications(c *fiber.Ctx) error {
 		PageSize: pageSize,
 	})
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: list applications failed")
 	}
 
 	data := make([]fiber.Map, 0, len(apps))
@@ -1421,7 +1435,7 @@ func (h *AdminHandler) CreateApplication(c *fiber.Ctx) error {
 
 	existing, err := h.appRepo.FindBySlug(c.Context(), body.Slug)
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: find application by slug failed")
 	}
 	if existing != nil {
 		return respondError(c, fiber.StatusConflict, "CONFLICT", "an application with this slug already exists")
@@ -1429,7 +1443,7 @@ func (h *AdminHandler) CreateApplication(c *fiber.Ctx) error {
 
 	secretKey, err := generateAppSecretKey()
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate secret key")
+		return h.internalError(c, err, "admin: generate secret key failed")
 	}
 
 	app := &domain.Application{
@@ -1444,7 +1458,7 @@ func (h *AdminHandler) CreateApplication(c *fiber.Ctx) error {
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return respondError(c, fiber.StatusConflict, "CONFLICT", "an application with this name already exists")
 		}
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: create application failed")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -1510,7 +1524,10 @@ func (h *AdminHandler) UpdateApplication(c *fiber.Ctx) error {
 
 	updated, err := h.appRepo.Update(c.Context(), id, body.Name, isActive)
 	if err != nil || updated == nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "failed to update application")
+		if err == nil {
+			err = errors.New("application not found after update")
+		}
+		return h.internalError(c, err, "admin: update application failed")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -1556,11 +1573,11 @@ func (h *AdminHandler) RotateApplicationKey(c *fiber.Ctx) error {
 
 	newKey, err := generateAppSecretKey()
 	if err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "failed to generate secret key")
+		return h.internalError(c, err, "admin: generate secret key failed")
 	}
 
 	if err := h.appRepo.RotateSecretKey(c.Context(), id, newKey); err != nil {
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return h.internalError(c, err, "admin: rotate application key failed")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -1576,20 +1593,34 @@ func generateAppSecretKey() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// mapServiceError maps service errors to HTTP responses.
-func mapServiceError(c *fiber.Ctx, err error) error {
+// mapServiceError maps service errors to HTTP responses and logs accordingly.
+func (h *AdminHandler) mapServiceError(c *fiber.Ctx, err error) error {
 	if err == nil {
 		return nil
 	}
+	requestID, _ := c.Locals(middleware.LocalRequestID).(string)
 	msg := err.Error()
 	switch {
 	case isPasswordPolicyError(err):
+		h.logger.Debug("admin: password policy violation",
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", msg)
 	case errors.Is(err, service.ErrNotFound):
+		h.logger.Debug("admin: resource not found",
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "resource not found")
 	case errors.Is(err, service.ErrConflict):
+		h.logger.Info("admin: resource conflict",
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusConflict, "CONFLICT", "resource already exists")
 	default:
-		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", msg)
+		h.logger.Error("admin: internal server error",
+			"error", err,
+			"request_id", requestID,
+		)
+		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 	}
 }

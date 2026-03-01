@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,12 +13,16 @@ import (
 
 // UserPermissionRepository manages user_permissions assignments.
 type UserPermissionRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewUserPermissionRepository creates a new UserPermissionRepository.
-func NewUserPermissionRepository(db *pgxpool.Pool) *UserPermissionRepository {
-	return &UserPermissionRepository{db: db}
+func NewUserPermissionRepository(db *pgxpool.Pool, log *slog.Logger) *UserPermissionRepository {
+	return &UserPermissionRepository{
+		db:     db,
+		logger: log.With("component", "user_perm_repo"),
+	}
 }
 
 // Assign creates a new user_permission assignment.

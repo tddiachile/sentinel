@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +26,7 @@ type Initializer struct {
 	userRoleRepo *postgres.UserRoleRepository
 	auditRepo    *postgres.AuditRepository
 	cfg          *config.Config
+	logger       *slog.Logger
 }
 
 // NewInitializer creates a new Initializer.
@@ -37,6 +38,7 @@ func NewInitializer(
 	userRoleRepo *postgres.UserRoleRepository,
 	auditRepo *postgres.AuditRepository,
 	cfg *config.Config,
+	log *slog.Logger,
 ) *Initializer {
 	return &Initializer{
 		appRepo:      appRepo,
@@ -46,6 +48,7 @@ func NewInitializer(
 		userRoleRepo: userRoleRepo,
 		auditRepo:    auditRepo,
 		cfg:          cfg,
+		logger:       log.With("component", "bootstrap"),
 	}
 }
 
@@ -58,7 +61,7 @@ func (i *Initializer) Initialize(ctx context.Context) error {
 		return fmt.Errorf("bootstrap: check existing apps: %w", err)
 	}
 	if exists {
-		log.Println("INFO: bootstrap skipped – system already initialized")
+		i.logger.Info("bootstrap skipped, system already initialized")
 		return nil
 	}
 
@@ -70,7 +73,7 @@ func (i *Initializer) Initialize(ctx context.Context) error {
 		return fmt.Errorf("bootstrap: BOOTSTRAP_ADMIN_PASSWORD is required but not set")
 	}
 
-	log.Println("INFO: starting system bootstrap")
+	i.logger.Info("starting system bootstrap")
 
 	// Step 2: Generate a random secret_key for the "system" application.
 	secretKey, err := generateSecretKey()
@@ -89,7 +92,7 @@ func (i *Initializer) Initialize(ctx context.Context) error {
 	if err := i.appRepo.Create(ctx, app); err != nil {
 		return fmt.Errorf("bootstrap: create system application: %w", err)
 	}
-	log.Printf("INFO: system application created – SECRET KEY: %s (store this securely; shown only once)", secretKey)
+	i.logger.Info("system application created", "secret_key_hint", secretKey[:8]+"...")
 
 	// Step 4: Create admin permissions.
 	adminPerms := []struct{ code, desc, scope string }{
@@ -159,7 +162,7 @@ func (i *Initializer) Initialize(ctx context.Context) error {
 	if err := i.userRepo.Create(ctx, adminUser); err != nil {
 		return fmt.Errorf("bootstrap: create admin user: %w", err)
 	}
-	log.Printf("INFO: admin user created – username: %s", adminUser.Username)
+	i.logger.Info("admin user created", "username", adminUser.Username)
 
 	// Step 7: Assign admin role to admin user for system application.
 	now := time.Now()
@@ -192,10 +195,10 @@ func (i *Initializer) Initialize(ctx context.Context) error {
 		Success: true,
 	}
 	if err := i.auditRepo.Insert(ctx, auditLog); err != nil {
-		log.Printf("WARN: bootstrap audit log failed: %v", err)
+		i.logger.Warn("bootstrap audit log failed", "error", err)
 	}
 
-	log.Println("INFO: system bootstrap completed successfully")
+	i.logger.Info("system bootstrap completed")
 	return nil
 }
 

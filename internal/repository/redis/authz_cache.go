@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -21,11 +22,15 @@ type UserContext struct {
 // AuthzCache manages authorization caches in Redis.
 type AuthzCache struct {
 	client *redis.Client
+	logger *slog.Logger
 }
 
 // NewAuthzCache creates a new AuthzCache.
-func NewAuthzCache(client *redis.Client) *AuthzCache {
-	return &AuthzCache{client: client}
+func NewAuthzCache(client *redis.Client, log *slog.Logger) *AuthzCache {
+	return &AuthzCache{
+		client: client,
+		logger: log.With("component", "authz_cache"),
+	}
 }
 
 func userContextKey(jti string) string {

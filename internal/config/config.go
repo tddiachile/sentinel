@@ -82,8 +82,9 @@ type BootstrapConfig struct {
 
 // LoggingConfig holds logging settings.
 type LoggingConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level  string `yaml:"level"`  // debug, info, warn, error
+	Format string `yaml:"format"` // json, text
+	Output string `yaml:"output"` // stdout, stderr (default: stdout)
 }
 
 // envVarRegexp matches ${VAR_NAME} placeholders in YAML values.
@@ -168,6 +169,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.Format == "" {
 		cfg.Logging.Format = "json"
+	}
+	if cfg.Logging.Output == "" {
+		cfg.Logging.Output = "stdout"
 	}
 
 	if err := validate(&cfg); err != nil {

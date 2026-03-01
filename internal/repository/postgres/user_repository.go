@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -15,12 +16,16 @@ import (
 
 // UserRepository handles persistence of User entities.
 type UserRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewUserRepository creates a new UserRepository.
-func NewUserRepository(db *pgxpool.Pool) *UserRepository {
-	return &UserRepository{db: db}
+func NewUserRepository(db *pgxpool.Pool, log *slog.Logger) *UserRepository {
+	return &UserRepository{
+		db:     db,
+		logger: log.With("component", "user_repo"),
+	}
 }
 
 // scanUser maps a pgx row into a domain.User.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -24,11 +25,15 @@ type RefreshTokenData struct {
 // RefreshTokenRepository manages refresh tokens in Redis.
 type RefreshTokenRepository struct {
 	client *redis.Client
+	logger *slog.Logger
 }
 
 // NewRefreshTokenRepository creates a new RefreshTokenRepository.
-func NewRefreshTokenRepository(client *redis.Client) *RefreshTokenRepository {
-	return &RefreshTokenRepository{client: client}
+func NewRefreshTokenRepository(client *redis.Client, log *slog.Logger) *RefreshTokenRepository {
+	return &RefreshTokenRepository{
+		client: client,
+		logger: log.With("component", "redis_refresh_repo"),
+	}
 }
 
 func refreshKey(hash string) string {

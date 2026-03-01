@@ -14,6 +14,7 @@ const (
 	LocalAppID     = "app_id"
 	LocalClaims    = "jwt_claims"
 	LocalApp       = "app"
+	LocalRequestID = "request_id"
 )
 
 // AuditContext captures request metadata for audit logging.

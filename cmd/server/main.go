@@ -17,7 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -25,7 +25,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	swagger "github.com/gofiber/swagger"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,6 +34,7 @@ import (
 	"github.com/enunezf/sentinel/internal/bootstrap"
 	"github.com/enunezf/sentinel/internal/config"
 	"github.com/enunezf/sentinel/internal/handler"
+	"github.com/enunezf/sentinel/internal/logger"
 	"github.com/enunezf/sentinel/internal/middleware"
 	pgrepository "github.com/enunezf/sentinel/internal/repository/postgres"
 	redisrepository "github.com/enunezf/sentinel/internal/repository/redis"
@@ -51,15 +51,22 @@ func main() {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("FATAL: %v", err)
+		// Logger not yet available; fall back to slog default and exit.
+		slog.Error("config load failed", "error", err)
+		os.Exit(1)
 	}
+
+	// Create structured logger as the first dependency.
+	appLogger := logger.New(cfg.Logging)
+	slog.SetDefault(appLogger)
 
 	// -----------------------------------------------------------------------
 	// PostgreSQL connection pool
 	// -----------------------------------------------------------------------
 	pgCfg, err := pgxpool.ParseConfig(cfg.Database.DSN())
 	if err != nil {
-		log.Fatalf("FATAL: cannot parse database DSN: %v", err)
+		appLogger.Error("cannot parse database DSN", "error", err, "component", "database")
+		os.Exit(1)
 	}
 	pgCfg.MaxConns = int32(cfg.Database.MaxOpenConns)
 	pgCfg.MinConns = int32(cfg.Database.MaxIdleConns)
@@ -68,14 +75,16 @@ func main() {
 	ctx := context.Background()
 	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
 	if err != nil {
-		log.Fatalf("FATAL: cannot create PostgreSQL pool: %v", err)
+		appLogger.Error("cannot create PostgreSQL pool", "error", err, "component", "database")
+		os.Exit(1)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("FATAL: cannot connect to PostgreSQL: %v", err)
+		appLogger.Error("cannot connect to PostgreSQL", "error", err, "component", "database")
+		os.Exit(1)
 	}
-	log.Println("INFO: PostgreSQL connection pool established")
+	appLogger.Info("PostgreSQL connection pool established", "component", "database")
 
 	// -----------------------------------------------------------------------
 	// Redis connection
@@ -87,46 +96,48 @@ func main() {
 	})
 	defer func() {
 		if err := rdb.Close(); err != nil {
-			log.Printf("WARN: error closing Redis client: %v", err)
+			appLogger.Warn("error closing Redis client", "error", err, "component", "redis")
 		}
 	}()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("FATAL: cannot connect to Redis: %v", err)
+		appLogger.Error("cannot connect to Redis", "error", err, "component", "redis")
+		os.Exit(1)
 	}
-	log.Println("INFO: Redis connection established")
+	appLogger.Info("Redis connection established", "component", "redis")
 
 	// -----------------------------------------------------------------------
 	// Token manager (RSA keys)
 	// -----------------------------------------------------------------------
 	tokenMgr, err := token.NewManager(cfg.JWT.PrivateKeyPath, cfg.JWT.PublicKeyPath)
 	if err != nil {
-		log.Fatalf("FATAL: cannot load RSA keys: %v", err)
+		appLogger.Error("cannot load RSA keys", "error", err, "component", "token")
+		os.Exit(1)
 	}
-	log.Println("INFO: RSA key pair loaded")
+	appLogger.Info("RSA key pair loaded", "component", "token")
 
 	// -----------------------------------------------------------------------
 	// Repositories
 	// -----------------------------------------------------------------------
-	userRepo := pgrepository.NewUserRepository(pool)
-	appRepo := pgrepository.NewApplicationRepository(pool)
-	refreshPGRepo := pgrepository.NewRefreshTokenRepository(pool)
-	auditRepo := pgrepository.NewAuditRepository(pool)
-	roleRepo := pgrepository.NewRoleRepository(pool)
-	permRepo := pgrepository.NewPermissionRepository(pool)
-	ccRepo := pgrepository.NewCostCenterRepository(pool)
-	userRoleRepo := pgrepository.NewUserRoleRepository(pool)
-	userPermRepo := pgrepository.NewUserPermissionRepository(pool)
-	userCCRepo := pgrepository.NewUserCostCenterRepository(pool)
-	pwdHistRepo := pgrepository.NewPasswordHistoryRepository(pool)
+	userRepo := pgrepository.NewUserRepository(pool, appLogger)
+	appRepo := pgrepository.NewApplicationRepository(pool, appLogger)
+	refreshPGRepo := pgrepository.NewRefreshTokenRepository(pool, appLogger)
+	auditRepo := pgrepository.NewAuditRepository(pool, appLogger)
+	roleRepo := pgrepository.NewRoleRepository(pool, appLogger)
+	permRepo := pgrepository.NewPermissionRepository(pool, appLogger)
+	ccRepo := pgrepository.NewCostCenterRepository(pool, appLogger)
+	userRoleRepo := pgrepository.NewUserRoleRepository(pool, appLogger)
+	userPermRepo := pgrepository.NewUserPermissionRepository(pool, appLogger)
+	userCCRepo := pgrepository.NewUserCostCenterRepository(pool, appLogger)
+	pwdHistRepo := pgrepository.NewPasswordHistoryRepository(pool, appLogger)
 
-	refreshRedisRepo := redisrepository.NewRefreshTokenRepository(rdb)
-	authzCache := redisrepository.NewAuthzCache(rdb)
+	refreshRedisRepo := redisrepository.NewRefreshTokenRepository(rdb, appLogger)
+	authzCache := redisrepository.NewAuthzCache(rdb, appLogger)
 
 	// -----------------------------------------------------------------------
 	// Services
 	// -----------------------------------------------------------------------
-	auditSvc := service.NewAuditService(auditRepo)
+	auditSvc := service.NewAuditService(auditRepo, appLogger)
 	defer auditSvc.Close()
 
 	authSvc := service.NewAuthService(
@@ -151,17 +162,18 @@ func main() {
 	// -----------------------------------------------------------------------
 	// Bootstrap
 	// -----------------------------------------------------------------------
-	initializer := bootstrap.NewInitializer(appRepo, userRepo, roleRepo, permRepo, userRoleRepo, auditRepo, cfg)
+	initializer := bootstrap.NewInitializer(appRepo, userRepo, roleRepo, permRepo, userRoleRepo, auditRepo, cfg, appLogger)
 	if err := initializer.Initialize(ctx); err != nil {
-		log.Fatalf("FATAL: bootstrap failed: %v", err)
+		appLogger.Error("bootstrap failed", "error", err, "component", "bootstrap")
+		os.Exit(1)
 	}
 
 	// -----------------------------------------------------------------------
 	// Handlers
 	// -----------------------------------------------------------------------
-	authHandler := handler.NewAuthHandler(authSvc, tokenMgr)
-	authzHandler := handler.NewAuthzHandler(authzSvc)
-	adminHandler := handler.NewAdminHandler(userSvc, roleSvc, permSvc, ccSvc, auditRepo, appRepo)
+	authHandler := handler.NewAuthHandler(authSvc, tokenMgr, appLogger)
+	authzHandler := handler.NewAuthzHandler(authzSvc, appLogger)
+	adminHandler := handler.NewAdminHandler(userSvc, roleSvc, permSvc, ccSvc, auditRepo, appRepo, appLogger)
 
 	// -----------------------------------------------------------------------
 	// Fiber application
@@ -170,13 +182,21 @@ func main() {
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			requestID, _ := c.Locals("request_id").(string)
 			code := fiber.StatusInternalServerError
 			msg := "internal server error"
-			var fiberErr *fiber.Error
 			if e, ok := err.(*fiber.Error); ok {
-				fiberErr = e
-				code = fiberErr.Code
-				msg = fiberErr.Message
+				code = e.Code
+				msg = e.Message
+			}
+			if code >= 500 {
+				appLogger.Error("unhandled server error",
+					"error", err,
+					"status", code,
+					"path", c.Path(),
+					"method", c.Method(),
+					"request_id", requestID,
+				)
 			}
 			return c.Status(code).JSON(fiber.Map{
 				"error": fiber.Map{
@@ -198,17 +218,16 @@ func main() {
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 		AllowHeaders: "Origin,Content-Type,Accept,Authorization,X-App-Key",
 	}))
-	app.Use(logger.New(logger.Config{
-		Format: `{"time":"${time}","status":${status},"latency":"${latency}","method":"${method}","path":"${path}"}` + "\n",
-	}))
+	app.Use(middleware.RequestID())
+	app.Use(middleware.RequestLogger(appLogger))
 	app.Use(middleware.SecurityHeaders())
 	app.Use(middleware.AuditContext())
 
 	// Middleware shortcuts.
-	appKeyMW := middleware.AppKey(appRepo)
-	jwtMW := middleware.JWTAuth(tokenMgr)
+	appKeyMW := middleware.AppKey(appRepo, appLogger)
+	jwtMW := middleware.JWTAuth(tokenMgr, appLogger)
 	requirePerm := func(code string) fiber.Handler {
-		return middleware.RequirePermission(authzSvc, code)
+		return middleware.RequirePermission(authzSvc, code, appLogger)
 	}
 
 	// -----------------------------------------------------------------------
@@ -290,7 +309,7 @@ func main() {
 	serverErr := make(chan error, 1)
 	go func() {
 		addr := fmt.Sprintf(":%d", cfg.Server.Port)
-		log.Printf("INFO: server listening on %s", addr)
+		appLogger.Info("server listening", "addr", addr, "component", "server")
 		if err := app.Listen(addr); err != nil {
 			serverErr <- err
 		}
@@ -298,9 +317,9 @@ func main() {
 
 	select {
 	case sig := <-quit:
-		log.Printf("INFO: received signal %s, initiating graceful shutdown", sig)
+		appLogger.Info("received signal, initiating graceful shutdown", "signal", sig.String(), "component", "server")
 	case err := <-serverErr:
-		log.Printf("ERROR: server error: %v", err)
+		appLogger.Error("server error", "error", err, "component", "server")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.GracefulShutdownTimeout)
@@ -309,16 +328,16 @@ func main() {
 	done := make(chan struct{})
 	go func() {
 		if err := app.Shutdown(); err != nil {
-			log.Printf("ERROR: shutdown error: %v", err)
+			appLogger.Error("shutdown error", "error", err, "component", "server")
 		}
 		close(done)
 	}()
 
 	select {
 	case <-shutdownCtx.Done():
-		log.Printf("WARN: graceful shutdown timed out after %s", cfg.Server.GracefulShutdownTimeout)
+		appLogger.Warn("graceful shutdown timed out", "timeout", cfg.Server.GracefulShutdownTimeout.String(), "component", "server")
 	case <-done:
-		log.Println("INFO: server shut down gracefully")
+		appLogger.Info("server shut down gracefully", "component", "server")
 	}
 }
 

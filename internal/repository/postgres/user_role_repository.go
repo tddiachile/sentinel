@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,12 +13,16 @@ import (
 
 // UserRoleRepository manages user_roles assignments.
 type UserRoleRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewUserRoleRepository creates a new UserRoleRepository.
-func NewUserRoleRepository(db *pgxpool.Pool) *UserRoleRepository {
-	return &UserRoleRepository{db: db}
+func NewUserRoleRepository(db *pgxpool.Pool, log *slog.Logger) *UserRoleRepository {
+	return &UserRoleRepository{
+		db:     db,
+		logger: log.With("component", "user_role_repo"),
+	}
 }
 
 // Assign creates a new user_role assignment.

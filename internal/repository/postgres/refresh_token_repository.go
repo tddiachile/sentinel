@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -15,12 +16,16 @@ import (
 
 // RefreshTokenRepository handles persistence of RefreshToken entities.
 type RefreshTokenRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewRefreshTokenRepository creates a new RefreshTokenRepository.
-func NewRefreshTokenRepository(db *pgxpool.Pool) *RefreshTokenRepository {
-	return &RefreshTokenRepository{db: db}
+func NewRefreshTokenRepository(db *pgxpool.Pool, log *slog.Logger) *RefreshTokenRepository {
+	return &RefreshTokenRepository{
+		db:     db,
+		logger: log.With("component", "refresh_token_repo"),
+	}
 }
 
 // Create inserts a new refresh token record.

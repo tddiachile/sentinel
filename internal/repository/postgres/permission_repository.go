@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,12 +14,16 @@ import (
 
 // PermissionRepository handles persistence of Permission entities.
 type PermissionRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewPermissionRepository creates a new PermissionRepository.
-func NewPermissionRepository(db *pgxpool.Pool) *PermissionRepository {
-	return &PermissionRepository{db: db}
+func NewPermissionRepository(db *pgxpool.Pool, log *slog.Logger) *PermissionRepository {
+	return &PermissionRepository{
+		db:     db,
+		logger: log.With("component", "perm_repo"),
+	}
 }
 
 func scanPermission(row pgx.Row) (*domain.Permission, error) {

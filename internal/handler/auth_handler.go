@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"log/slog"
+
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/enunezf/sentinel/internal/middleware"
@@ -12,11 +14,16 @@ import (
 type AuthHandler struct {
 	authSvc  *service.AuthService
 	tokenMgr *token.Manager
+	logger   *slog.Logger
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(authSvc *service.AuthService, tokenMgr *token.Manager) *AuthHandler {
-	return &AuthHandler{authSvc: authSvc, tokenMgr: tokenMgr}
+func NewAuthHandler(authSvc *service.AuthService, tokenMgr *token.Manager, log *slog.Logger) *AuthHandler {
+	return &AuthHandler{
+		authSvc:  authSvc,
+		tokenMgr: tokenMgr,
+		logger:   log.With("component", "auth"),
+	}
 }
 
 // loginRequest is the POST /auth/login request body.
@@ -66,7 +73,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		UserAgent:  c.Get("User-Agent"),
 	})
 	if err != nil {
-		return mapAuthError(c, err)
+		return h.mapAuthError(c, err)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -118,7 +125,7 @@ func (h *AuthHandler) Refresh(c *fiber.Ctx) error {
 		UserAgent:    c.Get("User-Agent"),
 	})
 	if err != nil {
-		return mapAuthError(c, err)
+		return h.mapAuthError(c, err)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -149,7 +156,7 @@ func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 	}
 
 	if err := h.authSvc.Logout(c.Context(), claims, c.Get("X-App-Key"), getIP(c), c.Get("User-Agent")); err != nil {
-		return mapAuthError(c, err)
+		return h.mapAuthError(c, err)
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -200,7 +207,7 @@ func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 		IP:              getIP(c),
 		UserAgent:       c.Get("User-Agent"),
 	}); err != nil {
-		return mapAuthError(c, err)
+		return h.mapAuthError(c, err)
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
@@ -238,31 +245,74 @@ func respondError(c *fiber.Ctx, status int, code, message string) error {
 	})
 }
 
-// mapAuthError maps service errors to HTTP responses.
-func mapAuthError(c *fiber.Ctx, err error) error {
+// mapAuthError maps service errors to HTTP responses and logs accordingly.
+func (h *AuthHandler) mapAuthError(c *fiber.Ctx, err error) error {
+	requestID, _ := c.Locals(middleware.LocalRequestID).(string)
+
 	switch err {
 	case service.ErrApplicationNotFound:
+		h.logger.Debug("auth error: application not found",
+			"request_id", requestID,
+			"ip", getIP(c),
+		)
 		return respondError(c, fiber.StatusUnauthorized, "APPLICATION_NOT_FOUND", err.Error())
 	case service.ErrInvalidClientType:
+		h.logger.Debug("auth error: invalid client_type",
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusBadRequest, "INVALID_CLIENT_TYPE", "client_type must be web, mobile, or desktop")
 	case service.ErrInvalidCredentials:
+		h.logger.Debug("auth error: invalid credentials",
+			"request_id", requestID,
+			"ip", getIP(c),
+		)
 		return respondError(c, fiber.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid username or password")
 	case service.ErrAccountInactive:
+		h.logger.Info("auth error: account inactive",
+			"request_id", requestID,
+			"ip", getIP(c),
+		)
 		return respondError(c, fiber.StatusForbidden, "ACCOUNT_INACTIVE", "account is inactive")
 	case service.ErrAccountLocked:
+		h.logger.Info("auth error: account locked",
+			"request_id", requestID,
+			"ip", getIP(c),
+		)
 		return respondError(c, fiber.StatusForbidden, "ACCOUNT_LOCKED", "account is locked")
 	case service.ErrTokenInvalid:
+		h.logger.Debug("auth error: token invalid",
+			"request_id", requestID,
+			"ip", getIP(c),
+		)
 		return respondError(c, fiber.StatusUnauthorized, "TOKEN_INVALID", "invalid token")
 	case service.ErrTokenExpired:
+		h.logger.Debug("auth error: token expired",
+			"request_id", requestID,
+			"ip", getIP(c),
+		)
 		return respondError(c, fiber.StatusUnauthorized, "TOKEN_EXPIRED", "token has expired")
 	case service.ErrTokenRevoked:
+		h.logger.Debug("auth error: token revoked",
+			"request_id", requestID,
+			"ip", getIP(c),
+		)
 		return respondError(c, fiber.StatusUnauthorized, "TOKEN_REVOKED", "token has been revoked")
 	case service.ErrPasswordReused:
+		h.logger.Debug("auth error: password reused",
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusBadRequest, "PASSWORD_REUSED", "password was recently used")
 	default:
 		if isPasswordPolicyError(err) {
+			h.logger.Debug("auth error: password policy violation",
+				"request_id", requestID,
+			)
 			return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		}
+		h.logger.Error("auth error: internal server error",
+			"error", err,
+			"request_id", requestID,
+		)
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 	}
 }

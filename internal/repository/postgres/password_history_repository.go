@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,12 +11,16 @@ import (
 
 // PasswordHistoryRepository manages the password_history table.
 type PasswordHistoryRepository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	logger *slog.Logger
 }
 
 // NewPasswordHistoryRepository creates a new PasswordHistoryRepository.
-func NewPasswordHistoryRepository(db *pgxpool.Pool) *PasswordHistoryRepository {
-	return &PasswordHistoryRepository{db: db}
+func NewPasswordHistoryRepository(db *pgxpool.Pool, log *slog.Logger) *PasswordHistoryRepository {
+	return &PasswordHistoryRepository{
+		db:     db,
+		logger: log.With("component", "pwd_history_repo"),
+	}
 }
 
 // GetLastN returns the last n password hashes for the user, ordered by created_at DESC.
