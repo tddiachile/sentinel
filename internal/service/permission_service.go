@@ -49,6 +49,9 @@ func (s *PermissionService) CreatePermission(ctx context.Context, appID uuid.UUI
 	}
 
 	if err := s.permRepo.Create(ctx, p); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("perm_svc: create permission: %w", err)
 	}
 

@@ -49,6 +49,9 @@ func (s *RoleService) CreateRole(ctx context.Context, appID uuid.UUID, name, des
 	}
 
 	if err := s.roleRepo.Create(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("role_svc: create role: %w", err)
 	}
 
@@ -100,7 +103,7 @@ func (s *RoleService) GetRole(ctx context.Context, roleID uuid.UUID) (*domain.Ro
 func (s *RoleService) UpdateRole(ctx context.Context, roleID uuid.UUID, name, description string, actorID uuid.UUID, ip, ua string) (*domain.Role, error) {
 	role, err := s.roleRepo.FindByID(ctx, roleID)
 	if err != nil || role == nil {
-		return nil, fmt.Errorf("role_svc: role not found")
+		return nil, ErrNotFound
 	}
 
 	if role.IsSystem && name != role.Name {
@@ -110,10 +113,15 @@ func (s *RoleService) UpdateRole(ctx context.Context, roleID uuid.UUID, name, de
 	oldName := role.Name
 	oldDesc := role.Description
 
-	role.Name = name
+	if name != "" {
+		role.Name = name
+	}
 	role.Description = description
 
 	if err := s.roleRepo.Update(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("role_svc: update role: %w", err)
 	}
 

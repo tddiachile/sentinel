@@ -1,0 +1,10 @@
+SENTINEL API TEST RESULTS
+=========================
+Date: 2026-03-01 00:33:53
+Target: http://localhost:8080
+
+Total:   143
+Passed:  142
+Failed:  1
+Skipped: 0
+

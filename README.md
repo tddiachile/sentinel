@@ -6,7 +6,7 @@ Servicio de autenticación y autorización centralizado construido en Go. Gestio
 
 | Capa | Tecnología |
 |---|---|
-| Backend | Go 1.22+, Fiber v2 |
+| Backend | Go 1.24+, Fiber v2 |
 | Base de datos | PostgreSQL 15 |
 | Cache / Tokens | Redis 7 |
 | Tokens | JWT RS256 (golang-jwt/jwt v5) |
@@ -107,6 +107,9 @@ go test ./tests/integration/... -v -timeout 300s
 # Carga — requiere k6 y servicio corriendo
 k6 run --env BASE_URL=http://localhost:8080 --env APP_KEY=<key> \
    tests/load/scenarios/mixed_load.js
+
+# E2E — requiere stack completo corriendo (25 tests con Playwright)
+cd web && npm run test:e2e
 ```
 
 ## Documentación

@@ -87,6 +87,9 @@ func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*d
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("user_svc: create user: %w", err)
 	}
 
@@ -131,7 +134,7 @@ type UpdateUserRequest struct {
 func (s *UserService) UpdateUser(ctx context.Context, userID uuid.UUID, req UpdateUserRequest) (*domain.User, error) {
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil || user == nil {
-		return nil, fmt.Errorf("user_svc: user not found")
+		return nil, ErrNotFound
 	}
 
 	oldValue := map[string]interface{}{

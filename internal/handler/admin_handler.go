@@ -3,6 +3,7 @@ package handler
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"math"
 	"regexp"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/enunezf/sentinel/internal/domain"
 	"github.com/enunezf/sentinel/internal/middleware"
@@ -1438,6 +1440,10 @@ func (h *AdminHandler) CreateApplication(c *fiber.Ctx) error {
 		IsActive:  true,
 	}
 	if err := h.appRepo.Create(c.Context(), app); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return respondError(c, fiber.StatusConflict, "CONFLICT", "an application with this name already exists")
+		}
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 	}
 
@@ -1579,6 +1585,10 @@ func mapServiceError(c *fiber.Ctx, err error) error {
 	switch {
 	case isPasswordPolicyError(err):
 		return respondError(c, fiber.StatusBadRequest, "VALIDATION_ERROR", msg)
+	case errors.Is(err, service.ErrNotFound):
+		return respondError(c, fiber.StatusNotFound, "NOT_FOUND", "resource not found")
+	case errors.Is(err, service.ErrConflict):
+		return respondError(c, fiber.StatusConflict, "CONFLICT", "resource already exists")
 	default:
 		return respondError(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", msg)
 	}

@@ -45,6 +45,9 @@ func (s *CostCenterService) CreateCostCenter(ctx context.Context, appID uuid.UUI
 	}
 
 	if err := s.ccRepo.Create(ctx, cc); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("cc_svc: create cost center: %w", err)
 	}
 
@@ -64,7 +67,7 @@ func (s *CostCenterService) GetCostCenter(ctx context.Context, id uuid.UUID) (*d
 func (s *CostCenterService) UpdateCostCenter(ctx context.Context, id uuid.UUID, name string, isActive bool, actorID uuid.UUID, ip, ua string) (*domain.CostCenter, error) {
 	cc, err := s.ccRepo.FindByID(ctx, id)
 	if err != nil || cc == nil {
-		return nil, fmt.Errorf("cc_svc: cost center not found")
+		return nil, ErrNotFound
 	}
 
 	cc.Name = name

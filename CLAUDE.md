@@ -26,7 +26,7 @@ All five phases are complete:
 | 2 — Infrastructure | Done | Docker Compose (Go + PostgreSQL 15 + Redis 7), Dockerfile, Makefile, config.yaml, 12-table schema. |
 | 3 — Backend | Done | Full Go implementation: domain, repositories (pgx + redis), services, handlers, middlewares, JWT RS256, bootstrap. |
 | 4 — Frontend | Done | React 18 + Vite + TypeScript + Tailwind. 9 admin pages. Token refresh interceptor. |
-| 5 — QA | Done | 62 unit tests + 11 integration tests (testcontainers) + 3 k6 load scenarios. |
+| 5 — QA | Done | 62 unit tests + 11 integration tests (testcontainers) + 3 k6 load scenarios + 25 E2E tests (Playwright). |
 
 ## Key Architecture Decisions
 
@@ -82,6 +82,9 @@ go test ./tests/integration/... -v -timeout 300s
 # Load tests — requires k6 and running service
 k6 run --env BASE_URL=http://localhost:8080 --env APP_KEY=<key> \
    tests/load/scenarios/mixed_load.js
+
+# E2E tests — requires full stack running (frontend + backend)
+cd web && npm run test:e2e
 ```
 
 ## API Documentation
